@@ -277,7 +277,7 @@ function initBinanceWS() {
     } catch {}
   };
 
-  ws.onerror = () => {};
+  ws.onerror = () => { markStale('cryptoTs'); };
   ws.onclose = () => {
     markStale('cryptoTs');
     setTimeout(initBinanceWS, retryDelay(binanceRetry++));
@@ -315,7 +315,7 @@ function initBlockchainWS() {
     } catch {}
   };
 
-  ws.onerror = () => {};
+  ws.onerror = () => { markStale('mempoolMeta'); };
   ws.onclose = () => setTimeout(initBlockchainWS, retryDelay(blockchainRetry++));
 }
 
