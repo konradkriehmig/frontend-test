@@ -12,6 +12,8 @@ python3 -m http.server 8080
 
 Then open `http://localhost:8080`.
 
+NASA NEO is queried with `DEMO_KEY` and polled at a safer interval to avoid rate-limit lockouts.
+
 ## Included feeds
 
 - OpenSky Network (flights)

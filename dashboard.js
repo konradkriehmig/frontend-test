@@ -1,5 +1,18 @@
 const missionStart = Date.now();
 const statusRegistry = new Map();
+const RETRY_BASE_MS = 3000;
+const MAX_RETRY_MS = 30000;
+const NASA_API_KEY = 'DEMO_KEY';
+
+const POLL_INTERVALS = {
+  flights: 7000,
+  ships: 20000,
+  space: 125000,
+  quakes: 10000,
+  weather: 14000,
+  github: 6000,
+  market: 5000,
+};
 
 const state = {
   flights: [],
@@ -7,6 +20,8 @@ const state = {
   satellites: [],
   iss: null,
   binance: null,
+  wsRetry: 0,
+  wikiRetry: 0,
 };
 
 const feedEls = {
@@ -78,6 +93,12 @@ function project(lon, lat, width, height) {
   };
 }
 
+function getNeoMissDistanceKm(neo) {
+  const rawDistance = neo?.close_approach_data?.[0]?.miss_distance?.kilometers;
+  const distance = Number(rawDistance);
+  return Number.isFinite(distance) ? distance : null;
+}
+
 function drawMap() {
   const canvas = document.getElementById('tacticalMap');
   if (!canvas) return;
@@ -141,7 +162,7 @@ function drawMap() {
 async function safeFetch(key, url, parser) {
   try {
     setStatus(key, 'CONNECTING');
-    const response = await fetch(url, { cache: 'no-cache' });
+    const response = await fetch(url);
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
     const data = parser ? await parser(response) : await response.json();
     setStatus(key, 'CONNECTED');
@@ -192,16 +213,19 @@ async function pollSpace() {
     const [iss, sats, neo] = await Promise.all([
       safeFetch('ISS', 'https://api.wheretheiss.at/v1/satellites/25544'),
       safeFetch('CelesTrak', 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json'),
-      safeFetch('NASA-NEO', 'https://api.nasa.gov/neo/rest/v1/feed/today?detailed=false&api_key=DEMO_KEY'),
+      safeFetch('NASA-NEO', `https://api.nasa.gov/neo/rest/v1/feed/today?detailed=false&api_key=${encodeURIComponent(NASA_API_KEY)}`),
     ]);
 
     state.iss = { lon: Number(iss.longitude), lat: Number(iss.latitude) };
 
-    const satList = (sats || []).slice(0, 70).map((s) => ({
-      satname: s.OBJECT_NAME,
-      lon: Number(s.LONGITUDE),
-      lat: Number(s.LATITUDE),
-    })).filter((s) => Number.isFinite(s.lon) && Number.isFinite(s.lat));
+    const satList = (sats || [])
+      .slice(0, 70)
+      .filter((s) => Number.isFinite(Number(s.LONGITUDE)) && Number.isFinite(Number(s.LATITUDE)))
+      .map((s) => ({
+        satname: s.OBJECT_NAME,
+        lon: Number(s.LONGITUDE),
+        lat: Number(s.LATITUDE),
+      }));
 
     state.satellites = satList.slice(0, 36).map(({ lon, lat }) => ({ lon, lat }));
 
@@ -211,7 +235,10 @@ async function pollSpace() {
     renderList(feedEls.space, [
       `ISS | lat ${state.iss.lat.toFixed(2)} | lon ${state.iss.lon.toFixed(2)}`,
       ...(satList.slice(0, 4).map((s) => `SAT ${s.satname || 'UNK'} | ${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`)),
-      ...(neoBodies.slice(0, 3).map((n) => `NEO ${n.name} | Miss dist ${Math.round(Number(n.close_approach_data?.[0]?.miss_distance?.kilometers || 0)).toLocaleString()}km`)),
+      ...(neoBodies.slice(0, 3).map((n) => {
+        const distanceKm = getNeoMissDistanceKm(n);
+        return `NEO ${n.name} | Miss dist ${distanceKm === null ? 'N/A' : `${Math.round(distanceKm).toLocaleString()}km`}`;
+      })),
     ]);
   } catch {
     renderError(feedEls.space, 'SIGNAL LOST // Space feeds degraded');
@@ -292,6 +319,7 @@ function initBinanceSocket() {
         price: Number(msg.c).toFixed(2),
         volume: Number(msg.v).toFixed(2),
       };
+      state.wsRetry = 0;
       setStatus('BinanceWS', 'CONNECTED');
     } catch {
       setStatus('BinanceWS', 'SIGNAL LOST', 'parse error');
@@ -300,8 +328,10 @@ function initBinanceSocket() {
 
   ws.onerror = () => setStatus('BinanceWS', 'SIGNAL LOST', 'socket error');
   ws.onclose = () => {
+    const retryDelay = Math.min(RETRY_BASE_MS * 2 ** state.wsRetry, MAX_RETRY_MS);
+    state.wsRetry += 1;
     setStatus('BinanceWS', 'SIGNAL LOST', 'reconnecting');
-    setTimeout(initBinanceSocket, 3000);
+    setTimeout(initBinanceSocket, retryDelay);
   };
 }
 
@@ -314,9 +344,10 @@ function initWikiStream() {
     try {
       const msg = JSON.parse(event.data);
       if (!msg.title || msg.type !== 'edit') return;
-      queue.unshift(`${msg.wiki || 'wiki'} | ${msg.title} | ${msg.user || 'anon'}`);
-      if (queue.length > 24) queue.pop();
-      renderList(feedEls.wiki, queue.slice(0, 14));
+      queue.push(`${msg.wiki || 'wiki'} | ${msg.title} | ${msg.user || 'anon'}`);
+      if (queue.length > 24) queue.shift();
+      renderList(feedEls.wiki, queue.slice(-14).reverse());
+      state.wikiRetry = 0;
       setStatus('WikipediaStream', 'CONNECTED');
     } catch {
       setStatus('WikipediaStream', 'SIGNAL LOST', 'stream parse error');
@@ -324,9 +355,11 @@ function initWikiStream() {
   };
 
   source.onerror = () => {
+    const retryDelay = Math.min(RETRY_BASE_MS * 2 ** state.wikiRetry, MAX_RETRY_MS);
+    state.wikiRetry += 1;
     setStatus('WikipediaStream', 'SIGNAL LOST', 'stream error');
     source.close();
-    setTimeout(initWikiStream, 4500);
+    setTimeout(initWikiStream, retryDelay);
   };
 }
 
@@ -364,13 +397,13 @@ function boot() {
   pollGitHub();
   pollCoinGecko();
 
-  setInterval(pollFlights, 7000);
-  setInterval(pollShips, 20000);
-  setInterval(pollSpace, 18000);
-  setInterval(pollQuakes, 10000);
-  setInterval(pollWeather, 14000);
-  setInterval(pollGitHub, 6000);
-  setInterval(pollCoinGecko, 5000);
+  setInterval(pollFlights, POLL_INTERVALS.flights);
+  setInterval(pollShips, POLL_INTERVALS.ships);
+  setInterval(pollSpace, POLL_INTERVALS.space);
+  setInterval(pollQuakes, POLL_INTERVALS.quakes);
+  setInterval(pollWeather, POLL_INTERVALS.weather);
+  setInterval(pollGitHub, POLL_INTERVALS.github);
+  setInterval(pollCoinGecko, POLL_INTERVALS.market);
 }
 
 boot();
