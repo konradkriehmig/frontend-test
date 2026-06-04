@@ -3,92 +3,74 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tactical Operations Dashboard</title>
+    <title>monitor</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap"
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="scanline"></div>
-    <div class="hud-frame"></div>
-
-    <header class="top-bar panel">
-      <h1>ORBITAL TACTICAL COMMAND</h1>
-      <div class="clock-wrap">
-        <div><span class="label">UTC</span> <span id="utcClock">--:--:--</span></div>
-        <div><span class="label">LOCAL</span> <span id="localClock">--:--:--</span></div>
-        <div><span class="label">MET</span> <span id="missionClock">T+00:00:00</span></div>
+    <header class="topbar">
+      <div class="topbar-l">
+        <span id="utcClock" class="clock-val">--:--:--</span>
+        <span class="dx">UTC</span>
       </div>
+      <div class="topbar-stats">
+        <span><span id="txRate" class="bv">—</span><span class="dx"> tx/min</span></span>
+        <span><span id="wikiRate" class="bv">—</span><span class="dx"> edits/min</span></span>
+        <span><span id="flightStat" class="bv">—</span><span class="dx"> aircraft</span></span>
+        <span><span id="quakeStat" class="bv">—</span><span class="dx"> quakes/hr</span></span>
+        <span><span id="mempoolSize" class="bv">—</span><span class="dx"> mempool</span></span>
+      </div>
+      <div class="topbar-r dx" id="uptimeEl">up 0s</div>
     </header>
 
-    <main class="dashboard-grid">
-      <section class="panel map-panel">
-        <h2>GLOBAL TACTICAL MAP</h2>
-        <canvas id="tacticalMap" width="920" height="420"></canvas>
-        <div class="map-legend">
-          <span class="dot flight"></span> Flights
-          <span class="dot ship"></span> Ships
-          <span class="dot satellite"></span> Satellites/ISS
-        </div>
+    <div class="ticker" id="ticker"></div>
+
+    <main class="grid">
+      <section class="panel p-crypto">
+        <div class="ph">BINANCE SPOT <span class="dx" id="cryptoTs">—</span></div>
+        <div class="crypto-grid" id="cryptoGrid"></div>
       </section>
 
-      <section class="panel status-panel">
-        <h2>NETWORK STATUS</h2>
-        <ul id="statusList" class="status-list"></ul>
+      <section class="panel p-tx">
+        <div class="ph">UNCONFIRMED BTC <span class="dx" id="txMeta">—</span></div>
+        <ul class="stream" id="txFeed"></ul>
       </section>
 
-      <section class="panel">
-        <h2>AVIATION // OPENSKY</h2>
-        <div id="flightsMeta" class="meta">ESTABLISHING LINK...</div>
-        <ul id="flightsFeed" class="feed"></ul>
+      <section class="panel p-mempool">
+        <div class="ph">MEMPOOL</div>
+        <div class="kv" id="mempoolKV"></div>
+        <div class="ph ph-sub">PENDING BLOCKS</div>
+        <ul class="stream" id="blockFeed"></ul>
       </section>
 
-      <section class="panel">
-        <h2>MARITIME // SPACEX SHIPS</h2>
-        <div id="shipsMeta" class="meta">ESTABLISHING LINK...</div>
-        <ul id="shipsFeed" class="feed"></ul>
+      <section class="panel p-iss">
+        <div class="ph">ISS <span class="dx" id="issCoords">—</span></div>
+        <div class="kv" id="issKV"></div>
+        <canvas id="issCanvas" width="340" height="120"></canvas>
       </section>
 
-      <section class="panel">
-        <h2>SPACE // ISS + SAT + NEO</h2>
-        <div id="spaceMeta" class="meta">ESTABLISHING LINK...</div>
-        <ul id="spaceFeed" class="feed"></ul>
+      <section class="panel p-quake">
+        <div class="ph">SEISMIC <span class="dx" id="quakeMeta">—</span></div>
+        <ul class="stream" id="quakeFeed"></ul>
       </section>
 
-      <section class="panel">
-        <h2>SEISMIC // USGS</h2>
-        <div id="quakeMeta" class="meta">ESTABLISHING LINK...</div>
-        <ul id="quakeFeed" class="feed"></ul>
+      <section class="panel p-flights">
+        <div class="ph">AVIATION <span class="dx" id="flightMeta">—</span></div>
+        <ul class="stream" id="flightFeed"></ul>
       </section>
 
-      <section class="panel">
-        <h2>WEATHER // OPEN-METEO</h2>
-        <div id="weatherMeta" class="meta">ESTABLISHING LINK...</div>
-        <ul id="weatherFeed" class="feed"></ul>
+      <section class="panel p-github">
+        <div class="ph">GITHUB <span class="dx" id="githubMeta">—</span></div>
+        <ul class="stream" id="githubFeed"></ul>
       </section>
 
-      <section class="panel">
-        <h2>MARKETS // COINGECKO + BINANCE WS</h2>
-        <div id="marketMeta" class="meta">ESTABLISHING LINK...</div>
-        <ul id="marketFeed" class="feed"></ul>
-      </section>
-
-      <section class="panel full-width">
-        <h2>LIVE GLOBAL ACTIVITY // GITHUB + WIKIPEDIA</h2>
-        <div class="dual-feed">
-          <div>
-            <h3>GitHub Events</h3>
-            <ul id="githubFeed" class="feed"></ul>
-          </div>
-          <div>
-            <h3>Wikipedia Recent Changes</h3>
-            <ul id="wikiFeed" class="feed"></ul>
-          </div>
-        </div>
+      <section class="panel p-wiki">
+        <div class="ph">WIKIPEDIA <span class="blink-dot" id="wikiDot">●</span> <span class="dx" id="wikiMeta">—</span></div>
+        <ul class="stream tall" id="wikiFeed"></ul>
       </section>
     </main>
 
