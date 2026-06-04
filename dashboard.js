@@ -239,11 +239,7 @@ function initBlockchainWS() {
       const outs = (tx.out || []).length;
       const hash = fmtHash(tx.hash);
 
-      const now = Date.now();
-      rates.txWindow.push(now);
-      rates.txWindow = rates.txWindow.filter((t) => now - t < 60000);
-      setText('txRate', rates.txWindow.length);
-      setText('txMeta', `${rates.txWindow.length}/min`);
+      rates.txWindow.push(Date.now());
 
       prependLi(
         el('txFeed'),
@@ -477,11 +473,7 @@ function initWikiStream() {
       const msg = JSON.parse(ev.data);
       if (!msg.title || msg.type !== 'edit') return;
 
-      const now = Date.now();
-      rates.wikiWindow.push(now);
-      rates.wikiWindow = rates.wikiWindow.filter((t) => now - t < 60000);
-      setText('wikiRate', rates.wikiWindow.length);
-      setText('wikiMeta', `${rates.wikiWindow.length}/min`);
+      rates.wikiWindow.push(Date.now());
 
       const lang = (msg.wiki || '?').replace('wiki', '').slice(0, 6);
       prependLi(
@@ -502,10 +494,23 @@ function initWikiStream() {
 /* ── clocks & uptime ── */
 function runClocks() {
   const tick = () => {
-    const now = new Date();
-    setText('utcClock', now.toUTCString().split(' ')[4]);
+    const now = Date.now();
+    const cutoff = now - 60000;
 
-    const elapsed = Math.floor((Date.now() - BOOT_TIME) / 1000);
+    /* trim rate windows from the front (oldest timestamps first) */
+    while (rates.txWindow.length > 0 && rates.txWindow[0] < cutoff) rates.txWindow.shift();
+    while (rates.wikiWindow.length > 0 && rates.wikiWindow[0] < cutoff) rates.wikiWindow.shift();
+
+    setText('txRate', rates.txWindow.length);
+    setText('txMeta', `${rates.txWindow.length}/min`);
+    setText('wikiRate', rates.wikiWindow.length);
+    setText('wikiMeta', `${rates.wikiWindow.length}/min`);
+    setText('mempoolSize', mempool.size);
+
+    const d = new Date(now);
+    setText('utcClock', d.toUTCString().split(' ')[4]);
+
+    const elapsed = Math.floor((now - BOOT_TIME) / 1000);
     const h = Math.floor(elapsed / 3600);
     const m = Math.floor((elapsed % 3600) / 60);
     const s = elapsed % 60;
