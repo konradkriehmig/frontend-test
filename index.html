@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Tactical Operations Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="scanline"></div>
+    <div class="hud-frame"></div>
+
+    <header class="top-bar panel">
+      <h1>ORBITAL TACTICAL COMMAND</h1>
+      <div class="clock-wrap">
+        <div><span class="label">UTC</span> <span id="utcClock">--:--:--</span></div>
+        <div><span class="label">LOCAL</span> <span id="localClock">--:--:--</span></div>
+        <div><span class="label">MET</span> <span id="missionClock">T+00:00:00</span></div>
+      </div>
+    </header>
+
+    <main class="dashboard-grid">
+      <section class="panel map-panel">
+        <h2>GLOBAL TACTICAL MAP</h2>
+        <canvas id="tacticalMap" width="920" height="420"></canvas>
+        <div class="map-legend">
+          <span class="dot flight"></span> Flights
+          <span class="dot ship"></span> Ships
+          <span class="dot satellite"></span> Satellites/ISS
+        </div>
+      </section>
+
+      <section class="panel status-panel">
+        <h2>NETWORK STATUS</h2>
+        <ul id="statusList" class="status-list"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>AVIATION // OPENSKY</h2>
+        <div id="flightsMeta" class="meta">ESTABLISHING LINK...</div>
+        <ul id="flightsFeed" class="feed"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>MARITIME // SPACEX SHIPS</h2>
+        <div id="shipsMeta" class="meta">ESTABLISHING LINK...</div>
+        <ul id="shipsFeed" class="feed"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>SPACE // ISS + SAT + NEO</h2>
+        <div id="spaceMeta" class="meta">ESTABLISHING LINK...</div>
+        <ul id="spaceFeed" class="feed"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>SEISMIC // USGS</h2>
+        <div id="quakeMeta" class="meta">ESTABLISHING LINK...</div>
+        <ul id="quakeFeed" class="feed"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>WEATHER // OPEN-METEO</h2>
+        <div id="weatherMeta" class="meta">ESTABLISHING LINK...</div>
+        <ul id="weatherFeed" class="feed"></ul>
+      </section>
+
+      <section class="panel">
+        <h2>MARKETS // COINGECKO + BINANCE WS</h2>
+        <div id="marketMeta" class="meta">ESTABLISHING LINK...</div>
+        <ul id="marketFeed" class="feed"></ul>
+      </section>
+
+      <section class="panel full-width">
+        <h2>LIVE GLOBAL ACTIVITY // GITHUB + WIKIPEDIA</h2>
+        <div class="dual-feed">
+          <div>
+            <h3>GitHub Events</h3>
+            <ul id="githubFeed" class="feed"></ul>
+          </div>
+          <div>
+            <h3>Wikipedia Recent Changes</h3>
+            <ul id="wikiFeed" class="feed"></ul>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script src="/dashboard.js" defer></script>
+  </body>
+</html>
