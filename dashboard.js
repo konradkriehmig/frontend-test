@@ -1,409 +1,547 @@
-const missionStart = Date.now();
-const statusRegistry = new Map();
-const RETRY_BASE_MS = 3000;
-const MAX_RETRY_MS = 30000;
-const NASA_API_KEY = 'DEMO_KEY';
+/* ── constants ── */
+const BOOT_TIME = Date.now();
+const MAX_STREAM = 60;
+const RETRY_BASE = 3000;
+const RETRY_MAX = 30000;
 
-const POLL_INTERVALS = {
-  flights: 7000,
-  ships: 20000,
-  space: 125000,
-  quakes: 10000,
-  weather: 14000,
-  github: 6000,
-  market: 5000,
+const PAIRS = [
+  'btcusdt','ethusdt','solusdt','bnbusdt','xrpusdt','adausdt',
+  'dogeusdt','avaxusdt','maticusdt','linkusdt','dotusdt','ltcusdt',
+  'uniusdt','atomusdt','nearusdt','shibusdt',
+];
+
+/* ── state ── */
+const crypto = {};
+PAIRS.forEach((p) => {
+  crypto[p] = { price: null, change: null, vol: null, history: [], canvas: null };
+});
+
+const rates = {
+  txWindow: [],
+  wikiWindow: [],
 };
 
-const state = {
-  flights: [],
-  ships: [],
-  satellites: [],
-  iss: null,
-  binance: null,
-  wsRetry: 0,
-  wikiRetry: 0,
+const mempool = {
+  size: '—', bytes: '—', minFee: '—',
+  fastestFee: '—', hourFee: '—', ecoFee: '—',
 };
 
-const feedEls = {
-  flights: document.getElementById('flightsFeed'),
-  ships: document.getElementById('shipsFeed'),
-  space: document.getElementById('spaceFeed'),
-  weather: document.getElementById('weatherFeed'),
-  quakes: document.getElementById('quakeFeed'),
-  market: document.getElementById('marketFeed'),
-  github: document.getElementById('githubFeed'),
-  wiki: document.getElementById('wikiFeed'),
-};
+let issHistory = [];
+let binanceRetry = 0;
+let blockchainRetry = 0;
+let mempoolRetry = 0;
+let wikiRetry = 0;
 
-const metaEls = {
-  flights: document.getElementById('flightsMeta'),
-  ships: document.getElementById('shipsMeta'),
-  space: document.getElementById('spaceMeta'),
-  weather: document.getElementById('weatherMeta'),
-  quakes: document.getElementById('quakeMeta'),
-  market: document.getElementById('marketMeta'),
-};
+/* ── helpers ── */
+function el(id) { return document.getElementById(id); }
 
-function setStatus(key, status, detail = '') {
-  statusRegistry.set(key, { status, detail, at: new Date() });
-  const target = document.getElementById('statusList');
-  target.innerHTML = '';
-  for (const [name, entry] of statusRegistry.entries()) {
-    const item = document.createElement('li');
-    const statusClass = entry.status === 'CONNECTED' ? 'status-good' : entry.status === 'SIGNAL LOST' ? 'status-lost' : 'status-pending';
-    const badge = document.createElement('span');
-    badge.className = statusClass;
-    badge.textContent = entry.status;
-    item.appendChild(badge);
-    item.appendChild(document.createTextNode(` // ${name}${entry.detail ? ` // ${entry.detail}` : ''}`));
-    target.appendChild(item);
-  }
+function setText(id, val) {
+  const e = el(id);
+  if (e) e.textContent = val;
 }
 
-function setMeta(name, text) {
-  if (metaEls[name]) {
-    metaEls[name].textContent = text;
-  }
+function fmtBTC(sats) { return (sats / 1e8).toFixed(4); }
+
+function fmtHash(h) { return h ? `${h.slice(0, 8)}…${h.slice(-6)}` : '—'; }
+
+function fmtK(n) {
+  if (n >= 1e9) return `${(n / 1e9).toFixed(1)}B`;
+  if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+  if (n >= 1e3) return `${(n / 1e3).toFixed(0)}k`;
+  return String(Math.round(n));
 }
 
-function renderList(el, rows, kind = 'good') {
-  if (!el) return;
-  el.innerHTML = '';
-  rows.forEach((row) => {
-    const li = document.createElement('li');
-    li.className = kind;
-    li.textContent = row;
-    el.appendChild(li);
+function fmtPrice(p) {
+  if (p === null || p === undefined) return '—';
+  if (p < 0.001) return p.toFixed(8);
+  if (p < 1) return p.toFixed(5);
+  if (p < 100) return p.toFixed(3);
+  return Math.round(p).toLocaleString('en-US');
+}
+
+function retryDelay(count) {
+  return Math.min(RETRY_BASE * 2 ** count, RETRY_MAX);
+}
+
+/* flash an element's background briefly */
+function flashEl(e) {
+  if (!e) return;
+  e.style.transition = 'none';
+  e.style.background = 'rgba(255,255,255,0.055)';
+  clearTimeout(e._ft);
+  e._ft = setTimeout(() => {
+    e.style.transition = 'background 0.25s ease-out';
+    e.style.background = '';
+  }, 60);
+}
+
+/* prepend a <li> to a stream, trimming overflow */
+function prependLi(listEl, html) {
+  if (!listEl) return;
+  const li = document.createElement('li');
+  li.className = 'flash-in';
+  li.innerHTML = html;
+  listEl.prepend(li);
+  while (listEl.children.length > MAX_STREAM) listEl.lastChild.remove();
+}
+
+/* append a <li> to a stream */
+function appendLi(listEl, html) {
+  if (!listEl) return;
+  const li = document.createElement('li');
+  li.innerHTML = html;
+  listEl.appendChild(li);
+}
+
+/* ── sparkline ── */
+function drawSparkline(canvas, history) {
+  if (!canvas || history.length < 2) return;
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width;
+  const h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+  const min = Math.min(...history);
+  const max = Math.max(...history);
+  const range = max - min || 1;
+  const trend = history[history.length - 1] >= history[0];
+  ctx.beginPath();
+  ctx.strokeStyle = trend ? 'rgba(255,255,255,0.55)' : 'rgba(130,130,130,0.35)';
+  ctx.lineWidth = 1;
+  history.forEach((v, i) => {
+    const x = (i / (history.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 1) - 0.5;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+}
+
+/* ── build crypto cells ── */
+function buildCryptoGrid() {
+  const grid = el('cryptoGrid');
+  if (!grid) return;
+  PAIRS.forEach((pair) => {
+    const sym = pair.replace('usdt', '').toUpperCase();
+    const cell = document.createElement('div');
+    cell.className = 'cc';
+    cell.id = `cc-${pair}`;
+    cell.innerHTML = `
+      <div class="cc-sym">${sym}</div>
+      <div class="cc-px" id="cp-${pair}">—</div>
+      <div class="cc-meta">
+        <span id="cg-${pair}" class="cc-up">—</span>
+        <span id="cv-${pair}" class="dx"></span>
+      </div>
+      <canvas id="ck-${pair}" width="120" height="20"></canvas>
+    `;
+    grid.appendChild(cell);
+    crypto[pair].canvas = el(`ck-${pair}`);
   });
 }
 
-function renderError(el, msg) {
-  if (!el) return;
-  el.innerHTML = '';
-  const li = document.createElement('li');
-  li.className = 'alert';
-  li.textContent = msg;
-  el.appendChild(li);
+/* ── update one crypto cell ── */
+function updateCryptoCell(pair, data) {
+  const s = crypto[pair];
+  if (!s) return;
+
+  const price = parseFloat(data.c);
+  const change = parseFloat(data.P);
+  const vol = parseFloat(data.q);
+
+  s.price = price;
+  s.change = change;
+  s.vol = vol;
+  s.history.push(price);
+  if (s.history.length > 80) s.history.shift();
+
+  const priceEl = el(`cp-${pair}`);
+  const chgEl = el(`cg-${pair}`);
+  const volEl = el(`cv-${pair}`);
+  const cell = el(`cc-${pair}`);
+
+  if (priceEl) priceEl.textContent = fmtPrice(price);
+  if (chgEl) {
+    chgEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    chgEl.className = change >= 0 ? 'cc-up' : 'cc-dn';
+  }
+  if (volEl) volEl.textContent = fmtK(vol);
+
+  flashEl(cell);
+  drawSparkline(s.canvas, s.history);
+  updateTickerItem(pair, price, change);
 }
 
-function project(lon, lat, width, height) {
-  return {
-    x: ((lon + 180) / 360) * width,
-    y: ((90 - lat) / 180) * height,
+/* ── ticker strip ── */
+function updateTickerItem(pair, price, change) {
+  const sym = pair.replace('usdt', '').toUpperCase();
+  let item = el(`ti-${pair}`);
+  if (!item) {
+    item = document.createElement('span');
+    item.id = `ti-${pair}`;
+    item.className = 'tick-item';
+    item.innerHTML = `<span class="tick-sym">${sym}</span><span class="tick-px" id="tp-${pair}"></span><span class="tick-chg" id="tc-${pair}"></span>`;
+    const ticker = el('ticker');
+    if (ticker) ticker.appendChild(item);
+  }
+  const pxEl = el(`tp-${pair}`);
+  const chEl = el(`tc-${pair}`);
+  if (pxEl) pxEl.textContent = fmtPrice(price);
+  if (chEl) {
+    chEl.textContent = `${change >= 0 ? '+' : ''}${change.toFixed(2)}%`;
+    chEl.style.color = change >= 0 ? '#888' : '#444';
+  }
+  item.className = `tick-item ${change >= 0 ? 'up' : 'down'}`;
+}
+
+/* ── Binance combined WebSocket ── */
+function initBinanceWS() {
+  const streams = PAIRS.map((p) => `${p}@ticker`).join('/');
+  const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
+
+  ws.onopen = () => { binanceRetry = 0; };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      const d = msg.data;
+      if (!d || !d.s) return;
+      const pair = d.s.toLowerCase();
+      if (crypto[pair]) {
+        updateCryptoCell(pair, d);
+        setText('cryptoTs', new Date().toLocaleTimeString('en-GB', { hour12: false }));
+      }
+    } catch {}
   };
+
+  ws.onerror = () => {};
+  ws.onclose = () => setTimeout(initBinanceWS, retryDelay(binanceRetry++));
 }
 
-function getNeoMissDistanceKm(neo) {
-  const rawDistance = neo?.close_approach_data?.[0]?.miss_distance?.kilometers;
-  const distance = Number(rawDistance);
-  return Number.isFinite(distance) ? distance : null;
+/* ── Blockchain.com unconfirmed tx WebSocket ── */
+function initBlockchainWS() {
+  const ws = new WebSocket('wss://ws.blockchain.info/inv');
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ op: 'unconfirmed_sub' }));
+    blockchainRetry = 0;
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.op !== 'utx') return;
+      const tx = msg.x;
+      const totalSats = (tx.out || []).reduce((s, o) => s + (o.value || 0), 0);
+      const btc = fmtBTC(totalSats);
+      const btcPrice = crypto.btcusdt?.price;
+      const usd = btcPrice ? `$${Math.round(totalSats / 1e8 * btcPrice).toLocaleString('en-US')}` : '';
+      const ins = tx.inputs?.length || 0;
+      const outs = (tx.out || []).length;
+      const hash = fmtHash(tx.hash);
+
+      rates.txWindow.push(Date.now());
+
+      prependLi(
+        el('txFeed'),
+        `<span class="hl">${hash}</span> <span class="dx">${btc} BTC</span> <span class="dx">${usd}</span> <span class="dx">${ins}→${outs}</span>`
+      );
+    } catch {}
+  };
+
+  ws.onerror = () => {};
+  ws.onclose = () => setTimeout(initBlockchainWS, retryDelay(blockchainRetry++));
 }
 
-function drawMap() {
-  const canvas = document.getElementById('tacticalMap');
+/* ── Mempool.space WebSocket ── */
+function renderMempoolKV() {
+  const e = el('mempoolKV');
+  if (!e) return;
+  e.innerHTML = `
+    <span class="k">pending tx</span><span class="v">${mempool.size}</span>
+    <span class="k">size MB</span><span class="v">${mempool.bytes}</span>
+    <span class="k">fastest</span><span class="v">${mempool.fastestFee} sat/vB</span>
+    <span class="k">1h fee</span><span class="v">${mempool.hourFee} sat/vB</span>
+    <span class="k">eco</span><span class="v">${mempool.ecoFee} sat/vB</span>
+  `;
+  setText('mempoolSize', mempool.size);
+}
+
+function initMempoolWS() {
+  const ws = new WebSocket('wss://mempool.space/api/v1/ws');
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ action: 'want', data: ['blocks', 'stats', 'mempool-blocks'] }));
+    mempoolRetry = 0;
+  };
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+
+      if (msg.mempoolInfo) {
+        const info = msg.mempoolInfo;
+        mempool.size = (info.size || 0).toLocaleString('en-US');
+        mempool.bytes = ((info.bytes || 0) / 1e6).toFixed(1);
+        mempool.minFee = info.mempoolminfee ? (info.mempoolminfee * 1e8).toFixed(0) : '—';
+        renderMempoolKV();
+      }
+
+      if (msg.fees) {
+        mempool.fastestFee = msg.fees.fastestFee ?? '—';
+        mempool.hourFee = msg.fees.hourFee ?? '—';
+        mempool.ecoFee = msg.fees.economyFee ?? '—';
+        renderMempoolKV();
+      }
+
+      if (msg['mempool-blocks']) {
+        const feed = el('blockFeed');
+        if (!feed) return;
+        feed.innerHTML = '';
+        msg['mempool-blocks'].slice(0, 6).forEach((b, i) => {
+          const nTx = b.nTx ?? '?';
+          const feeRange = b.feeRange
+            ? `${Math.round(b.feeRange[0])}–${Math.round(b.feeRange[b.feeRange.length - 1])} sat/vB`
+            : '';
+          const size = b.blockSize ? `${(b.blockSize / 1e6).toFixed(2)}MB` : '';
+          appendLi(feed, `<span class="dx">+${i}</span> <span class="hl">${nTx} tx</span> <span class="dx">${size} ${feeRange}</span>`);
+        });
+      }
+
+      if (msg.block) {
+        const b = msg.block;
+        prependLi(
+          el('blockFeed'),
+          `<span class="hl">BLOCK ${b.height ?? '?'}</span> <span class="dx">${b.tx_count ?? '?'} tx · ${((b.size || 0) / 1e6).toFixed(2)} MB</span>`
+        );
+      }
+    } catch {}
+  };
+
+  ws.onerror = () => {};
+  ws.onclose = () => setTimeout(initMempoolWS, retryDelay(mempoolRetry++));
+}
+
+/* ── ISS position (2s poll) ── */
+function drawISSMap() {
+  const canvas = el('issCanvas');
   if (!canvas) return;
   const ctx = canvas.getContext('2d');
-  const { width, height } = canvas;
+  const W = canvas.width;
+  const H = canvas.height;
+  ctx.clearRect(0, 0, W, H);
 
-  ctx.clearRect(0, 0, width, height);
-
-  ctx.strokeStyle = 'rgba(0, 229, 255, 0.2)';
-  for (let i = 0; i <= 12; i++) {
-    const x = (width / 12) * i;
-    ctx.beginPath();
-    ctx.moveTo(x, 0);
-    ctx.lineTo(x, height);
-    ctx.stroke();
-  }
+  /* grid lines */
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 0.5;
   for (let i = 0; i <= 6; i++) {
-    const y = (height / 6) * i;
-    ctx.beginPath();
-    ctx.moveTo(0, y);
-    ctx.lineTo(width, y);
-    ctx.stroke();
+    const x = (W / 6) * i;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H); ctx.stroke();
+  }
+  for (let i = 0; i <= 3; i++) {
+    const y = (H / 3) * i;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
 
-  const centerX = width / 2;
-  const centerY = height / 2;
-  const radius = Math.min(width, height) * 0.35;
-  const sweep = (Date.now() / 30) % 360;
-  const sweepRad = (sweep * Math.PI) / 180;
+  if (issHistory.length < 2) return;
+
+  /* trail */
   ctx.beginPath();
-  ctx.moveTo(centerX, centerY);
-  ctx.arc(centerX, centerY, radius, sweepRad, sweepRad + 0.24);
-  ctx.closePath();
-  const grd = ctx.createRadialGradient(centerX, centerY, 20, centerX, centerY, radius);
-  grd.addColorStop(0, 'rgba(127, 255, 0, 0.38)');
-  grd.addColorStop(1, 'rgba(127, 255, 0, 0)');
-  ctx.fillStyle = grd;
+  ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+  ctx.lineWidth = 1;
+  issHistory.forEach((p, i) => {
+    const x = ((p.lon + 180) / 360) * W;
+    const y = ((90 - p.lat) / 180) * H;
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.stroke();
+
+  /* current dot */
+  const last = issHistory[issHistory.length - 1];
+  const lx = ((last.lon + 180) / 360) * W;
+  const ly = ((90 - last.lat) / 180) * H;
+  ctx.beginPath();
+  ctx.arc(lx, ly, 3, 0, Math.PI * 2);
+  ctx.fillStyle = '#fff';
   ctx.fill();
-
-  const drawPoints = (entries, color, size = 2.2) => {
-    ctx.fillStyle = color;
-    entries.forEach(({ lon, lat }) => {
-      const p = project(lon, lat, width, height);
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, size, 0, Math.PI * 2);
-      ctx.fill();
-    });
-  };
-
-  drawPoints(state.flights, '#00e5ff', 1.6);
-  drawPoints(state.ships, '#ffc857', 2.2);
-  drawPoints(state.satellites, '#7fff00', 2.5);
-
-  if (state.iss) {
-    drawPoints([state.iss], '#ff4d6d', 3.4);
-  }
-
-  requestAnimationFrame(drawMap);
 }
 
-async function safeFetch(key, url, parser) {
-  try {
-    setStatus(key, 'CONNECTING');
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    const data = parser ? await parser(response) : await response.json();
-    setStatus(key, 'CONNECTED');
-    return data;
-  } catch (error) {
-    setStatus(key, 'SIGNAL LOST', error.message);
-    throw error;
-  }
+function pollISS() {
+  fetch('https://api.wheretheiss.at/v1/satellites/25544')
+    .then((r) => r.json())
+    .then((d) => {
+      const lat = parseFloat(d.latitude);
+      const lon = parseFloat(d.longitude);
+      const alt = parseFloat(d.altitude);
+      const vel = parseFloat(d.velocity);
+
+      issHistory.push({ lat, lon });
+      if (issHistory.length > 80) issHistory.shift();
+
+      const kv = el('issKV');
+      if (kv) {
+        kv.innerHTML = `
+          <span class="k">lat</span><span class="v">${lat.toFixed(4)}</span>
+          <span class="k">lon</span><span class="v">${lon.toFixed(4)}</span>
+          <span class="k">alt km</span><span class="v">${Math.round(alt)}</span>
+          <span class="k">km/s</span><span class="v">${(vel / 3600).toFixed(2)}</span>
+        `;
+      }
+
+      const latDir = lat >= 0 ? 'N' : 'S';
+      const lonDir = lon >= 0 ? 'E' : 'W';
+      setText('issCoords', `${Math.abs(lat).toFixed(1)}°${latDir} ${Math.abs(lon).toFixed(1)}°${lonDir}`);
+
+      drawISSMap();
+    })
+    .catch(() => {});
 }
 
-async function pollFlights() {
-  try {
-    const data = await safeFetch('OpenSky', 'https://opensky-network.org/api/states/all');
-    const rows = (data.states || []).slice(0, 24).map((f) => ({
-      call: f[1] || 'UNK',
-      lon: Number(f[5]),
-      lat: Number(f[6]),
-      alt: Number(f[7]),
-      vel: Number(f[9]),
-    })).filter((f) => Number.isFinite(f.lon) && Number.isFinite(f.lat));
-    state.flights = rows.map(({ lon, lat }) => ({ lon, lat }));
-    setMeta('flights', `${rows.length} tracks // refreshed ${new Date().toLocaleTimeString()}`);
-    renderList(feedEls.flights, rows.slice(0, 10).map((f) => `${f.call.trim()} | ALT ${Math.round(f.alt || 0)}m | SPD ${Math.round(f.vel || 0)}m/s`));
-  } catch {
-    renderError(feedEls.flights, 'SIGNAL LOST // OpenSky feed unavailable');
-  }
+/* ── USGS seismic (15s poll) ── */
+function pollQuakes() {
+  fetch('https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson')
+    .then((r) => r.json())
+    .then((d) => {
+      const feats = d.features || [];
+      setText('quakeMeta', `${feats.length}/hr`);
+      setText('quakeStat', feats.length);
+
+      const feed = el('quakeFeed');
+      if (!feed) return;
+      feed.innerHTML = '';
+      feats.slice(0, 25).forEach((q) => {
+        const mag = q.properties.mag ?? '?';
+        const place = q.properties.place || '?';
+        const t = new Date(q.properties.time).toLocaleTimeString('en-GB', { hour12: false });
+        appendLi(feed, `<span class="hl">M${mag}</span> <span class="dx">${place}</span> <span class="dx">${t}</span>`);
+      });
+    })
+    .catch(() => {});
 }
 
-async function pollShips() {
-  try {
-    const data = await safeFetch('SpaceXShips', 'https://api.spacexdata.com/v4/ships');
-    const rows = (data || []).filter((s) => Number.isFinite(s.longitude) && Number.isFinite(s.latitude)).slice(0, 24).map((s) => ({
-      name: s.name,
-      lon: Number(s.longitude),
-      lat: Number(s.latitude),
-      status: s.active ? 'ACTIVE' : 'STANDBY',
-    }));
-    state.ships = rows.map(({ lon, lat }) => ({ lon, lat }));
-    setMeta('ships', `${rows.length} vessels tracked`);
-    renderList(feedEls.ships, rows.slice(0, 10).map((s) => `${s.name} | ${s.status} | ${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`));
-  } catch {
-    renderError(feedEls.ships, 'SIGNAL LOST // Maritime feed unavailable');
-  }
+/* ── OpenSky aviation (12s poll) ── */
+function pollFlights() {
+  fetch('https://opensky-network.org/api/states/all')
+    .then((r) => r.json())
+    .then((d) => {
+      const states = d.states || [];
+      const valid = states.filter((f) => f[5] != null && f[6] != null);
+      setText('flightMeta', `${states.length.toLocaleString('en-US')} tracked`);
+      setText('flightStat', states.length.toLocaleString('en-US'));
+
+      const feed = el('flightFeed');
+      if (!feed) return;
+      feed.innerHTML = '';
+      valid.slice(0, 30).forEach((f) => {
+        const cs = (f[1] || 'UNK').trim();
+        const lat = parseFloat(f[6]).toFixed(2);
+        const lon = parseFloat(f[5]).toFixed(2);
+        const alt = Math.round(f[7] || 0);
+        const vel = Math.round(f[9] || 0);
+        const co = f[2] || '?';
+        appendLi(feed, `<span class="hl">${cs}</span> <span class="dx">${co}</span> <span class="dx">${lat},${lon}</span> <span class="dx">${alt}m ${vel}m/s</span>`);
+      });
+    })
+    .catch(() => {});
 }
 
-async function pollSpace() {
-  try {
-    const [iss, sats, neo] = await Promise.all([
-      safeFetch('ISS', 'https://api.wheretheiss.at/v1/satellites/25544'),
-      safeFetch('CelesTrak', 'https://celestrak.org/NORAD/elements/gp.php?GROUP=active&FORMAT=json'),
-      safeFetch('NASA-NEO', `https://api.nasa.gov/neo/rest/v1/feed/today?detailed=false&api_key=${encodeURIComponent(NASA_API_KEY)}`),
-    ]);
-
-    state.iss = { lon: Number(iss.longitude), lat: Number(iss.latitude) };
-
-    const satList = (sats || [])
-      .slice(0, 70)
-      .filter((s) => Number.isFinite(Number(s.LONGITUDE)) && Number.isFinite(Number(s.LATITUDE)))
-      .map((s) => ({
-        satname: s.OBJECT_NAME,
-        lon: Number(s.LONGITUDE),
-        lat: Number(s.LATITUDE),
-      }));
-
-    state.satellites = satList.slice(0, 36).map(({ lon, lat }) => ({ lon, lat }));
-
-    const neoBodies = Object.values(neo.near_earth_objects || {}).flat();
-    setMeta('space', `ISS + ${state.satellites.length} sats + ${neoBodies.length} NEO objects`);
-
-    renderList(feedEls.space, [
-      `ISS | lat ${state.iss.lat.toFixed(2)} | lon ${state.iss.lon.toFixed(2)}`,
-      ...(satList.slice(0, 4).map((s) => `SAT ${s.satname || 'UNK'} | ${s.lat.toFixed(2)}, ${s.lon.toFixed(2)}`)),
-      ...(neoBodies.slice(0, 3).map((n) => {
-        const distanceKm = getNeoMissDistanceKm(n);
-        return `NEO ${n.name} | Miss dist ${distanceKm === null ? 'N/A' : `${Math.round(distanceKm).toLocaleString()}km`}`;
-      })),
-    ]);
-  } catch {
-    renderError(feedEls.space, 'SIGNAL LOST // Space feeds degraded');
-  }
+/* ── GitHub Events (8s poll) ── */
+function pollGitHub() {
+  fetch('https://api.github.com/events?per_page=30')
+    .then((r) => r.json())
+    .then((events) => {
+      setText('githubMeta', `${(events || []).length} recent`);
+      const feed = el('githubFeed');
+      if (!feed) return;
+      feed.innerHTML = '';
+      (events || []).slice(0, 22).forEach((e) => {
+        const type = (e.type || '?').replace('Event', '');
+        const repo = e.repo?.name || '?';
+        const actor = e.actor?.login || 'anon';
+        appendLi(feed, `<span class="dx">${type}</span> <span class="hl">${repo}</span> <span class="dx">${actor}</span>`);
+      });
+    })
+    .catch(() => {});
 }
 
-async function pollQuakes() {
-  try {
-    const data = await safeFetch(
-      'USGS',
-      'https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson'
-    );
-    const rows = (data.features || []).slice(0, 12).map((q) => ({
-      mag: q.properties.mag,
-      place: q.properties.place,
-      time: new Date(q.properties.time).toLocaleTimeString(),
-    }));
-    setMeta('quakes', `${rows.length} seismic events / hour`);
-    renderList(feedEls.quakes, rows.map((q) => `M${q.mag || 0} | ${q.place} | ${q.time}`), 'alert');
-  } catch {
-    renderError(feedEls.quakes, 'SIGNAL LOST // Seismic feed unavailable');
-  }
-}
-
-async function pollWeather() {
-  try {
-    const data = await safeFetch(
-      'OpenMeteo',
-      'https://api.open-meteo.com/v1/forecast?latitude=28.5729&longitude=-80.649&current=temperature_2m,wind_speed_10m,weather_code&timezone=UTC'
-    );
-    const c = data.current || {};
-    setMeta('weather', 'Cape Canaveral tactical weather station');
-    renderList(feedEls.weather, [
-      `TEMP ${c.temperature_2m ?? '??'}°C`,
-      `WIND ${c.wind_speed_10m ?? '??'} km/h`,
-      `WX CODE ${c.weather_code ?? '??'}`,
-    ]);
-  } catch {
-    renderError(feedEls.weather, 'SIGNAL LOST // Weather uplink down');
-  }
-}
-
-async function pollGitHub() {
-  try {
-    const events = await safeFetch('GitHubEvents', 'https://api.github.com/events');
-    renderList(feedEls.github, (events || []).slice(0, 16).map((e) => `${e.type} | ${e.repo?.name || 'unknown'} | ${e.actor?.login || 'anon'}`));
-  } catch {
-    renderError(feedEls.github, 'SIGNAL LOST // GitHub event stream unavailable');
-  }
-}
-
-async function pollCoinGecko() {
-  try {
-    const data = await safeFetch(
-      'CoinGecko',
-      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum,solana&vs_currencies=usd&include_24hr_change=true'
-    );
-    renderList(feedEls.market, [
-      `BTC $${Math.round(data.bitcoin?.usd || 0).toLocaleString()} | 24h ${Number(data.bitcoin?.usd_24h_change || 0).toFixed(2)}%`,
-      `ETH $${Math.round(data.ethereum?.usd || 0).toLocaleString()} | 24h ${Number(data.ethereum?.usd_24h_change || 0).toFixed(2)}%`,
-      `SOL $${Number(data.solana?.usd || 0).toFixed(2)} | 24h ${Number(data.solana?.usd_24h_change || 0).toFixed(2)}%`,
-      state.binance ? `BINANCE BTCUSDT ${state.binance.price} | VOL ${state.binance.volume}` : 'BINANCE WS pending...',
-    ]);
-    setMeta('market', 'high frequency crypto telemetry');
-  } catch {
-    renderError(feedEls.market, 'SIGNAL LOST // Market APIs unavailable');
-  }
-}
-
-function initBinanceSocket() {
-  setStatus('BinanceWS', 'CONNECTING');
-  const ws = new WebSocket('wss://stream.binance.com:9443/ws/btcusdt@ticker');
-
-  ws.onmessage = (event) => {
-    try {
-      const msg = JSON.parse(event.data);
-      state.binance = {
-        price: Number(msg.c).toFixed(2),
-        volume: Number(msg.v).toFixed(2),
-      };
-      state.wsRetry = 0;
-      setStatus('BinanceWS', 'CONNECTED');
-    } catch {
-      setStatus('BinanceWS', 'SIGNAL LOST', 'parse error');
-    }
-  };
-
-  ws.onerror = () => setStatus('BinanceWS', 'SIGNAL LOST', 'socket error');
-  ws.onclose = () => {
-    const retryDelay = Math.min(RETRY_BASE_MS * 2 ** state.wsRetry, MAX_RETRY_MS);
-    state.wsRetry += 1;
-    setStatus('BinanceWS', 'SIGNAL LOST', 'reconnecting');
-    setTimeout(initBinanceSocket, retryDelay);
-  };
-}
-
+/* ── Wikipedia SSE ── */
 function initWikiStream() {
-  setStatus('WikipediaStream', 'CONNECTING');
   const source = new EventSource('https://stream.wikimedia.org/v2/stream/recentchange');
 
-  const queue = [];
-  source.onmessage = (event) => {
+  source.onmessage = (ev) => {
     try {
-      const msg = JSON.parse(event.data);
+      const msg = JSON.parse(ev.data);
       if (!msg.title || msg.type !== 'edit') return;
-      queue.push(`${msg.wiki || 'wiki'} | ${msg.title} | ${msg.user || 'anon'}`);
-      if (queue.length > 24) queue.shift();
-      renderList(feedEls.wiki, queue.slice(-14).reverse());
-      state.wikiRetry = 0;
-      setStatus('WikipediaStream', 'CONNECTED');
-    } catch {
-      setStatus('WikipediaStream', 'SIGNAL LOST', 'stream parse error');
-    }
+
+      rates.wikiWindow.push(Date.now());
+
+      const lang = (msg.wiki || '?').replace('wiki', '').slice(0, 6);
+      prependLi(
+        el('wikiFeed'),
+        `<span class="dx">${lang}</span> <span class="hl">${msg.title}</span> <span class="dx">${msg.user || 'anon'}</span>`
+      );
+
+      wikiRetry = 0;
+    } catch {}
   };
 
   source.onerror = () => {
-    const retryDelay = Math.min(RETRY_BASE_MS * 2 ** state.wikiRetry, MAX_RETRY_MS);
-    state.wikiRetry += 1;
-    setStatus('WikipediaStream', 'SIGNAL LOST', 'stream error');
     source.close();
-    setTimeout(initWikiStream, retryDelay);
+    setTimeout(initWikiStream, retryDelay(wikiRetry++));
   };
 }
 
+/* ── clocks & uptime ── */
 function runClocks() {
-  const utcEl = document.getElementById('utcClock');
-  const localEl = document.getElementById('localClock');
-  const missionEl = document.getElementById('missionClock');
-
   const tick = () => {
-    const now = new Date();
-    utcEl.textContent = now.toUTCString().split(' ')[4];
-    localEl.textContent = now.toLocaleTimeString();
-    const elapsed = Math.floor((Date.now() - missionStart) / 1000);
-    const h = String(Math.floor(elapsed / 3600)).padStart(2, '0');
-    const m = String(Math.floor((elapsed % 3600) / 60)).padStart(2, '0');
-    const s = String(elapsed % 60).padStart(2, '0');
-    missionEl.textContent = `T+${h}:${m}:${s}`;
-  };
+    const now = Date.now();
+    const cutoff = now - 60000;
 
+    /* trim rate windows from the front (oldest timestamps first) */
+    while (rates.txWindow.length > 0 && rates.txWindow[0] < cutoff) rates.txWindow.shift();
+    while (rates.wikiWindow.length > 0 && rates.wikiWindow[0] < cutoff) rates.wikiWindow.shift();
+
+    setText('txRate', rates.txWindow.length);
+    setText('txMeta', `${rates.txWindow.length}/min`);
+    setText('wikiRate', rates.wikiWindow.length);
+    setText('wikiMeta', `${rates.wikiWindow.length}/min`);
+    setText('mempoolSize', mempool.size);
+
+    const d = new Date(now);
+    setText('utcClock', d.toUTCString().split(' ')[4]);
+
+    const elapsed = Math.floor((now - BOOT_TIME) / 1000);
+    const h = Math.floor(elapsed / 3600);
+    const m = Math.floor((elapsed % 3600) / 60);
+    const s = elapsed % 60;
+    setText('uptimeEl', h > 0 ? `up ${h}h ${m}m` : m > 0 ? `up ${m}m ${s}s` : `up ${s}s`);
+  };
   tick();
   setInterval(tick, 1000);
 }
 
+/* ── boot ── */
 function boot() {
+  buildCryptoGrid();
   runClocks();
-  drawMap();
-  initBinanceSocket();
+
+  /* WebSocket streams */
+  initBinanceWS();
+  initBlockchainWS();
+  initMempoolWS();
   initWikiStream();
 
-  pollFlights();
-  pollShips();
-  pollSpace();
+  /* initial polls */
+  pollISS();
   pollQuakes();
-  pollWeather();
+  pollFlights();
   pollGitHub();
-  pollCoinGecko();
 
-  setInterval(pollFlights, POLL_INTERVALS.flights);
-  setInterval(pollShips, POLL_INTERVALS.ships);
-  setInterval(pollSpace, POLL_INTERVALS.space);
-  setInterval(pollQuakes, POLL_INTERVALS.quakes);
-  setInterval(pollWeather, POLL_INTERVALS.weather);
-  setInterval(pollGitHub, POLL_INTERVALS.github);
-  setInterval(pollCoinGecko, POLL_INTERVALS.market);
+  /* recurring polls */
+  setInterval(pollISS, 2000);
+  setInterval(pollQuakes, 15000);
+  setInterval(pollFlights, 12000);
+  setInterval(pollGitHub, 8000);
 }
 
 boot();
