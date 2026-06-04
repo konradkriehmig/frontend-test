@@ -19,9 +19,10 @@
       </div>
       <div class="topbar-stats">
         <span><span id="txRate" class="bv">—</span><span class="dx"> tx/min</span></span>
-        <span><span id="wikiRate" class="bv">—</span><span class="dx"> edits/min</span></span>
         <span><span id="flightStat" class="bv">—</span><span class="dx"> aircraft</span></span>
         <span><span id="quakeStat" class="bv">—</span><span class="dx"> quakes/hr</span></span>
+        <span><span id="solarStat" class="bv">—</span><span class="dx"> km/s solar</span></span>
+        <span><span id="githubStat" class="bv">—</span><span class="dx"> github</span></span>
         <span><span id="mempoolSize" class="bv">—</span><span class="dx"> mempool</span></span>
       </div>
       <div class="topbar-r dx" id="uptimeEl">up 0s</div>
@@ -31,7 +32,7 @@
 
     <main class="grid">
       <section class="panel p-crypto">
-        <div class="ph">BINANCE SPOT <span class="dx" id="cryptoTs">—</span></div>
+        <div class="ph">CRYPTO <span class="dx" id="cryptoTs">—</span></div>
         <div class="crypto-grid" id="cryptoGrid"></div>
       </section>
 
@@ -41,7 +42,7 @@
       </section>
 
       <section class="panel p-mempool">
-        <div class="ph">MEMPOOL</div>
+        <div class="ph">MEMPOOL <span class="dx" id="mempoolMeta">—</span></div>
         <div class="kv" id="mempoolKV"></div>
         <div class="ph ph-sub">PENDING BLOCKS</div>
         <ul class="stream" id="blockFeed"></ul>
@@ -68,9 +69,25 @@
         <ul class="stream" id="githubFeed"></ul>
       </section>
 
-      <section class="panel p-wiki">
-        <div class="ph">WIKIPEDIA <span class="blink-dot" id="wikiDot">●</span> <span class="dx" id="wikiMeta">—</span></div>
-        <ul class="stream tall" id="wikiFeed"></ul>
+      <section class="panel p-solar">
+        <div class="ph">SOLAR WIND <span class="dx" id="solarMeta">—</span></div>
+        <div class="kv" id="solarKV"></div>
+        <ul class="stream" id="solarFeed"></ul>
+      </section>
+
+      <section class="panel p-neo">
+        <div class="ph">NEAR EARTH OBJECTS <span class="dx" id="neoMeta">—</span></div>
+        <ul class="stream" id="neoFeed"></ul>
+      </section>
+
+      <section class="panel p-air">
+        <div class="ph">AIR QUALITY <span class="dx" id="airMeta">—</span></div>
+        <ul class="stream" id="airFeed"></ul>
+      </section>
+
+      <section class="panel p-counters">
+        <div class="ph">CLOCKS / COUNTERS <span class="dx" id="counterMeta">—</span></div>
+        <div class="kv" id="counterKV"></div>
       </section>
     </main>
 

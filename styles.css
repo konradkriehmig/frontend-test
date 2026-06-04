@@ -132,14 +132,17 @@ body {
 }
 
 /* panel spans */
-.p-crypto  { grid-column: span 6; grid-row: span 2; }
-.p-tx      { grid-column: span 3; grid-row: span 2; }
-.p-mempool { grid-column: span 3; }
-.p-iss     { grid-column: span 3; }
-.p-quake   { grid-column: span 4; }
-.p-flights { grid-column: span 4; }
-.p-github  { grid-column: span 4; }
-.p-wiki    { grid-column: 1 / -1; }
+.p-crypto   { grid-column: span 4; }
+.p-tx       { grid-column: span 4; grid-row: span 2; }
+.p-mempool  { grid-column: span 4; grid-row: span 2; }
+.p-iss      { grid-column: span 4; }
+.p-quake    { grid-column: span 4; }
+.p-flights  { grid-column: span 4; }
+.p-github   { grid-column: span 3; }
+.p-solar    { grid-column: span 3; }
+.p-neo      { grid-column: span 3; }
+.p-air      { grid-column: span 3; }
+.p-counters { grid-column: 1 / -1; }
 
 /* ── panel ── */
 .panel {
@@ -168,7 +171,7 @@ body {
 /* ── crypto grid ── */
 .crypto-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 1px;
   background: var(--border);
 }
@@ -255,13 +258,6 @@ body {
   gap: 0;
 }
 
-.stream.tall {
-  max-height: 130px;
-  flex-direction: row;
-  flex-wrap: wrap;
-  gap: 0 20px;
-}
-
 .stream li {
   font-size: 10px;
   padding: 2px 0;
@@ -271,10 +267,6 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   flex-shrink: 0;
-}
-
-.stream.tall li {
-  min-width: 260px;
 }
 
 .stream li .hl {
@@ -290,30 +282,18 @@ body {
   to   { background: transparent; }
 }
 
-/* ── blink dot ── */
-.blink-dot {
-  font-size: 8px;
-  color: var(--bright);
-  animation: blink-anim 1.2s step-end infinite;
-}
-
-@keyframes blink-anim {
-  50% { opacity: 0; }
-}
-
 /* ── responsive ── */
 @media (max-width: 1300px) {
-  .p-crypto  { grid-column: span 7; }
-  .p-tx      { grid-column: span 5; }
-  .p-mempool { grid-column: span 5; }
-  .p-iss     { grid-column: span 7; }
-  .p-quake, .p-flights, .p-github { grid-column: span 4; }
+  .p-crypto, .p-tx, .p-mempool, .p-iss, .p-quake, .p-flights { grid-column: span 6; }
+  .p-github, .p-solar, .p-neo, .p-air { grid-column: span 6; }
+  .p-counters { grid-column: 1 / -1; }
 }
 
 @media (max-width: 900px) {
   body { font-size: 10px; }
   .p-crypto, .p-tx, .p-mempool, .p-iss,
-  .p-quake, .p-flights, .p-github, .p-wiki {
+  .p-quake, .p-flights, .p-github, .p-solar,
+  .p-neo, .p-air, .p-counters {
     grid-column: 1 / -1 !important;
     grid-row: span 1 !important;
   }
