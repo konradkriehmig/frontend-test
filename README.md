@@ -1,6 +1,6 @@
 # frontend-test
 
-Tactical military/space command dashboard with high-frequency public data feeds.
+Minimal monochrome command dashboard with dense live public data feeds.
 
 ## Run
 
@@ -17,12 +17,13 @@ NASA NEO is queried with `DEMO_KEY` and polled at a safer interval to avoid rate
 ## Included feeds
 
 - OpenSky Network (flights)
-- SpaceX Ships (maritime)
-- ISS + CelesTrak + NASA NEO (space)
-- CoinGecko + Binance WebSocket (market)
-- Open-Meteo (weather)
+- ISS position (space)
+- NASA NEO feed (space objects)
+- NOAA solar wind (space weather)
+- Binance WebSocket (crypto)
+- Blockchain + mempool WebSockets (transaction flow)
 - USGS Earthquakes (seismic)
 - GitHub Events (developer activity)
-- Wikimedia Recent Changes stream (live edits)
-
-If any source is unavailable or rate-limited, the dashboard switches that channel to a **SIGNAL LOST** state.
+- Open-Meteo Air Quality (environment)
+- Live clocks and estimated global counters
+If a polled source is unavailable or rate-limited, the dashboard keeps the last known value and shows a subtle age indicator or **SIGNAL LOST** state.
